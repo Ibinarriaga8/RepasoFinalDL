@@ -9,3 +9,8 @@ This class is contained in the src.optimization module. This class is a custom i
 
 This class is contained in the src.optimization module. You will have to complete the constructor and step method. It is not allowed to use methods such as add or sub, only +, -, * and /. 
 It is recommended to look at the steps of the algorithm in the PyTorch documentation.
+
+## GroupNorm (1 point)
+
+Development of the forward pass of the GroupNorm layer. No for-loops or functions from the nn package
+can be used.

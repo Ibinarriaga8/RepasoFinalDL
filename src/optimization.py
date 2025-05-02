@@ -129,9 +129,9 @@ class SGDMomentum(torch.optim.Optimizer):
 
                     if "momentum_buffer" not in param_state:
                         # Inicializar momenutum buffer
-                        group["momentum_buffer"] = torch.zeros_like(p.data)
+                        param_state["momentum_buffer"] = torch.zeros_like(p.data)
                     
-                    v = group["momentum_buffer"]
+                    v = param_state["momentum_buffer"]
 
                     # vt =pvt-1 + dp 
                     v = group["momentum"] * v + d_p

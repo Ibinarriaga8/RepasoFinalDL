@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from activations import *
+from src.activations import *
 import pytest
 
 # ---------- Linear Layer Test ----------

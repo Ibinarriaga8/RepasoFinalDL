@@ -3,6 +3,8 @@ import torch.nn.functional as F
 import math
 from typing import Any
 
+# own modules
+from utils import get_dropout_random_indexes
 
 
 """
@@ -618,4 +620,53 @@ class Conv1d(torch.nn.Module):
             torch.nn.init.uniform_(self.bias, -bound, bound)
 
         return None
+    
+class Dropout(torch.nn.Module):
+    """
+    This the Dropout class.
 
+    Attr:
+        p: probability of the dropout.
+        inplace: indicates if the operation is done in-place.
+            Defaults to False.
+    """
+
+    def __init__(self, p: float, inplace: bool = False) -> None:
+        """
+        This function is the constructor of the Dropout class.
+
+        Args:
+            p: probability of the dropout.
+            inplace: if the operation is done in place.
+                Defaults to False.
+        """
+
+        # TODO
+        super().__init__()
+        self._p = p
+        self._inplace = inplace
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        This method computes the forwward pass.
+
+        Args:
+            inputs: inputs tensor. Dimensions: [*].
+
+        Returns:
+            outputs. Dimensions: [*], same as inputs tensor.
+        """
+
+        # TODO
+        if self.training: # .train() mode 
+            dropout_mask = get_dropout_random_indexes(shape = inputs.shape, p = self._p)
+            dropout_mask = (dropout_mask==0)/(1-self._p) #rescale by a factor of p/(1-p)
+            
+            if self._inplace:
+                return inputs.mul_(dropout_mask) # inplace operation mul_ (trailing underscore)
+            
+            else:
+                outputs = inputs.clone()
+                return outputs*dropout_mask
+        else: # .eval() mode; no dropout
+            return inputs
