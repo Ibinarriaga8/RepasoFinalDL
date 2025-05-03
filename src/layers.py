@@ -153,11 +153,10 @@ class Conv2dFunction(torch.autograd.Function):
 
     @staticmethod
     def forward(
-        ctx: Any,
+        ctx,
         inputs: torch.Tensor,
         weight: torch.Tensor,
         bias: torch.Tensor,
-        dilation: int,
         padding: int,
         stride: int,
     ) -> torch.Tensor:
@@ -165,100 +164,107 @@ class Conv2dFunction(torch.autograd.Function):
         This function is the forward method of the class.
 
         Args:
-            ctx: context for saving elements for the backward.
-            inputs: inputs for the model. Dimensions: [batch,
-                input channels, sequence length].
-            weight: weight of the layer.
+            ctx: Context for saving elements for the backward.
+            inputs: Inputs for the model. Dimensions: [batch,
+                input channels, height, width].
+            weight: Weight of the layer.
                 Dimensions: [output channels, input channels,
-                kernel size].
-            bias: bias of the layer. Dimensions: [output channels].
+                kernel size, kernel size].
+            bias: Bias of the layer. Dimensions: [output channels].
+            padding: padding parameter.
+            stride: stride parameter.
 
         Returns:
-            output of the layer. Dimensions:
+            Output of the layer. Dimensions:
                 [batch, output channels,
-                (sequence length + 2*padding - kernel size) /
-                stride + 1]
+                (height + 2*padding - kernel size) / stride + 1,
+                (width + 2*padding - kernel size) / stride + 1]
         """
 
-        co, ci, k = weight.shape
-        b, ci, hi = inputs.shape
-        ho = (hi + 2*padding - k) // stride + 1
-        unfolded_inputs = unfold1d(inputs, kernel_size=k, dilation=dilation, padding=padding, stride=stride)
-        unfolded_kernel = weight.view(co, k*ci)
+        # TODO
 
-        output = torch.matmul(unfolded_kernel, unfolded_inputs) + bias.view(co, 1)
+        #Unfolding the input tensor
+
+        #Unfolding the input tensor
+        b, _, hi, wi = inputs.shape
+        co, ci, kh, kw = weight.shape
         
-        ctx.save_for_backward(
-            inputs,
-            unfolded_inputs, 
-            weight, 
-            unfolded_kernel
-        )
-        ctx.padding = padding
-        ctx.dilation = dilation
-        ctx.stride = stride
+        ho, wo = (hi+2*padding-kh) // stride + 1, (wi+2*padding-kh) // stride + 1
+        # UNFOLD
+        unfolded_inputs = F.unfold(inputs, kernel_size= (kh, kw), padding=padding, stride = stride) # (b, cikhkw, howo)
+        unfolded_kernel = weight.view(co, ci*kh*kw)
 
-        return output
+        # Compute convolution
+        unfolded_outputs = torch.matmul(unfolded_kernel, unfolded_inputs) + bias.view(co, 1) # (co, howo)
+
+        #FOLD (co, howo) -> (co, ho, wo)
+        outputs = F.fold(unfolded_outputs, (ho, wo), padding=padding, stride=stride)
+
+        # Save for backward
+        ctx.save_for_backward(inputs, weight, bias, unfolded_inputs, unfolded_kernel)
+        ctx.stride = stride
+        ctx.padding = padding
+
+        return outputs
+
+
     @staticmethod
     def backward(  # type: ignore
         ctx, grad_output: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, None, None, None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, None, None]:
         """
         This is the backward of the layer.
 
         Args:
-            ctx: contex for loading elements needed in the backward.
-            grad_output: outputs gradients. Dimensions:
+            ctx: Context for loading elements needed in the backward.
+            grad_output: Outputs gradients. Dimensions:
                 [batch, output channels,
-                (sequence length + 2*padding - kernel size) /
-                stride + 1]
+                (height + 2*padding - kernel size) / stride + 1,
+                (width + 2*padding - kernel size) / stride + 1]
+                #2*padding to make it symmetric; add 2*padding to height and width	
 
         Returns:
-            gradient of the inputs. Dimensions: [batch,
-                input channels, sequence length].
-            gradient of the weights. Dimensions: [output channels,
-                input channels, kernel size].
-            gradient of the bias. Dimensions: [output channels].
-            None.
+            Inputs gradients. Dimensions: [batch, input channels,
+                height, width].
+            Weight gradients. Dimensions: [output channels,
+                input channels, kernel size, kernel size].
+            Bias gradients. Dimensions: [output channels].
             None.
             None.
         """
 
-        # TODO 
-        inputs, unfolded_inputs, weight, unfolded_kernel = ctx.saved_tensors
+        # TODO
+        inputs, weight, bias, unfolded_inputs, unfolded_kernel = ctx.saved_tensors
+        batch, ci, hi, wi = inputs.shape
+        batch, co, ho, wo = grad_output.shape
+        co, ci, kh, kw = weight.shape
         padding = ctx.padding
-        dilation = ctx.dilation
-        stride = ctx.stride
-
-        batch, co, ho = grad_output.shape
-        batch, ci, hi = inputs.shape
-        co,ci,k = weight.shape
-        
-        # Inputs gradient
-        unfolded_grad_inputs = torch.matmul(grad_output.transpose(1,2), unfolded_kernel) #bxhoxcik
-        grad_inputs = fold1d(unfolded_grad_inputs.transpose(1,2),
-                             output_size=hi,
-                             kernel_size=k,
-                             dilation=dilation,
-                             padding=padding,
-                             stride=stride
-                             )
-
-        # Weight gradient
-        unfolded_grad_weights = torch.bmm(grad_output, unfolded_inputs.transpose(1,2))
-        grad_weights = unfolded_grad_weights.sum(dim = 0).view(co, ci, k)
+        stride = ctx.stride 
 
         # Bias gradient
-        grad_bias=grad_output.sum(dim = (0, 2))
+        bias_gradient = grad_output.sum(dim = (0,2,3)) # dims [b, co, ho, wo] sum over 0,2,3 -> bias applied over co
+
+        # grad_output_unfolded
+        grad_output_unfolded = grad_output.view(batch, co, ho*wo)
+
+        # GRAD INPUTS
+        inputs_grad_unfolded = torch.matmul(grad_output_unfolded.transpose(1,2), unfolded_kernel)
+        
+        grad_inputs = F.fold(inputs_grad_unfolded.transpose(1,2), output_size = (hi, wi), kernel_size=(kh, kw),
+                             padding = padding, stride = stride)
+
+        #GRAD WEIGHT
+        weight_grad_unfolded = torch.bmm(grad_output_unfolded, unfolded_inputs.transpose(1,2))
+        grad_weight = weight_grad_unfolded.sum(0).view(co, ci, kh, kw)
 
         return (
             grad_inputs,
-            grad_weights,
-            grad_bias,
-            None,
+            grad_weight,
+            bias_gradient,
             None,
             None
         )
+    
 
 
 class Conv2d(torch.nn.Module):
