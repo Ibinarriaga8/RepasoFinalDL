@@ -542,7 +542,7 @@ class Conv1dFunction(torch.autograd.Function):
         # Bias gradient
         grad_bias=grad_output.sum(dim = (0, 2))
 
-        return (
+        return ( 
             grad_inputs,
             grad_weights,
             grad_bias,
