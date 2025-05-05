@@ -1,10 +1,10 @@
 import torch
 import torch.nn.functional as F
 import math
-from typing import Any
+from typing import Any, Optional
 
 # own modules
-from utils import get_dropout_random_indexes
+from src.utils import get_dropout_random_indexes
 
 
 """
@@ -676,3 +676,581 @@ class Dropout(torch.nn.Module):
                 return outputs*dropout_mask
         else: # .eval() mode; no dropout
             return inputs
+        
+
+
+
+
+"""
+Recurrent Layers
+"""
+
+
+
+
+class RNNFunction(torch.autograd.Function):
+    """
+    Class for the implementation of the forward and backward pass of
+    the RNN.
+    """
+
+    @staticmethod
+    def forward(  # type: ignore
+        ctx: Any,
+        inputs: torch.Tensor,
+        h0: torch.Tensor,
+        weight_ih: torch.Tensor,
+        weight_hh: torch.Tensor,
+        bias_ih: torch.Tensor,
+        bias_hh: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        This is the forward method of the RNN.
+
+        Args:
+            ctx: context for saving elements for the backward.
+            inputs: input tensor. Dimensions: [batch, sequence,
+                input size].
+            h0: first hidden state. Dimensions: [1, batch,
+                hidden size].
+            weight_ih: weight for the inputs.
+                Dimensions: [hidden size, input size].
+            weight_hh: weight for the inputs.
+                Dimensions: [hidden size, hidden size].
+            bias_ih: bias for the inputs.
+                Dimensions: [hidden size].
+            bias_hh: bias for the inputs.
+                Dimensions: [hidden size].
+
+
+        Returns:
+            outputs tensor. Dimensions: [batch, sequence,
+                hidden size].
+            final hidden state for each element in the batch.
+                Dimensions: [1, batch, hidden size].
+        """
+
+        # TODO
+        b, sequence, input_size = inputs.shape
+        h_prev = h0
+        _,_, hidden_size = h0.shape
+
+        output = torch.zeros(b, sequence, hidden_size, dtype = inputs.dtype)
+
+        for ts in range(sequence):
+            x_t = inputs[:,ts,:]    
+            
+            z_inputs = x_t @ weight_ih.T + bias_ih
+            z_h = h_prev @ weight_hh.T + bias_hh
+            
+            h = z_h + z_inputs 
+            h *= (h>=0).float() # aply relu
+            
+            h_prev = h
+            output[:,ts,:] = h
+
+        ctx.save_for_backward(
+            h0,
+            output, 
+            inputs,
+            weight_hh,
+            weight_ih
+        )
+        return output, h_prev
+
+
+
+    @staticmethod
+    def backward(  # type: ignore
+        ctx: Any, grad_output: torch.Tensor, grad_hn: torch.Tensor
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        """
+        This method is the backward of the RNN.
+
+        Args:
+            ctx: context for loading elements from the forward.
+
+            grad_output: outputs gradients. Dimensions: [batch, sequence, hidden size].
+            grad_hn: final hidden state gradients. Dimensions: [1, batch, hs].
+
+
+        Returns:
+            inputs gradients. Dimensions: [batch, sequence,
+                input size].
+            h0 gradients state. Dimensions: [1, batch,
+                hidden size].
+            weight_ih gradient. Dimensions: [hidden size,
+                input size].
+            weight_hh gradients. Dimensions: [hidden size,
+                hidden size].
+            bias_ih gradients. Dimensions: [hidden size].
+            bias_hh gradients. Dimensions: [hidden size].
+        """
+
+        # TODO
+        h0, output, inputs, weight_hh, weight_ih = ctx.saved_tensors
+        b, sequence, hidden_size = output.shape
+        b, sequence, input_size = inputs.shape
+
+        grad_ho = grad_hn.clone()
+        
+        # Initialize all gradients
+
+        grad_inputs = torch.zeros_like(inputs)
+        grad_weight_ih = torch.zeros_like(weight_ih)
+        grad_weight_hh = torch.zeros_like(weight_hh)
+        grad_bias_ih =torch.zeros(hidden_size)
+        grad_bias_hh = torch.zeros(hidden_size)
+
+        for ts in reversed(range(sequence)):
+            
+            dh = grad_output[:,ts,:] + grad_ho
+            grad_relu = (output[:,ts,:]>0).float()
+
+            grad_z = dh*grad_relu
+            grad_z = grad_z.squeeze()
+            # Inputs grad:
+            grad_inputs[:,ts,:] = grad_z @ weight_ih
+            grad_weight_ih += torch.matmul(grad_z.T, inputs[:,ts,:])
+            grad_bias_ih += grad_z.sum(0)
+
+            # Hidden grad
+            h_prev = output[:,ts-1,:] if ts > 0 else h0.squeeze(0)
+            grad_weight_hh += grad_z.T @ h_prev
+            grad_bias_hh += grad_z.sum(0)
+            grad_ho = grad_z @ weight_hh
+
+        return(
+            grad_inputs,
+            grad_ho.unsqueeze(0),
+            grad_weight_ih,
+            grad_weight_hh,
+            grad_bias_ih,
+            grad_bias_hh,
+        )
+
+
+
+        
+        
+class RNN(torch.nn.Module):
+    """
+    This is the class that represents the RNN Layer.
+    """
+
+    def __init__(self, input_dim: int, hidden_size: int):
+        """
+        This method is the constructor of the RNN layer.
+        """
+
+        # call super class constructor
+        super().__init__()
+
+        # define attributes
+        self.hidden_size = hidden_size
+        self.weight_ih: torch.Tensor = torch.nn.Parameter(
+            torch.empty(hidden_size, input_dim)
+        )
+        self.weight_hh: torch.Tensor = torch.nn.Parameter(
+            torch.empty(hidden_size, hidden_size)
+        )
+        self.bias_ih: torch.Tensor = torch.nn.Parameter(torch.empty(hidden_size))
+        self.bias_hh: torch.Tensor = torch.nn.Parameter(torch.empty(hidden_size))
+
+        # init parameters corectly
+        self.reset_parameters()
+
+        self.fn = RNNFunction.apply
+
+    def forward(self, inputs: torch.Tensor, h0: torch.Tensor) -> torch.Tensor:
+        """
+        This is the forward pass for the class.
+
+        Args:
+            inputs: inputs tensor. Dimensions: [batch, sequence,
+                input size].
+            h0: initial hidden state.
+
+        Returns:
+            outputs tensor. Dimensions: [batch, sequence,
+                hidden size].
+            final hidden state for each element in the batch.
+                Dimensions: [1, batch, hidden size].
+        """
+
+        return self.fn(
+            inputs, h0, self.weight_ih, self.weight_hh, self.bias_ih, self.bias_hh
+        )
+
+    def reset_parameters(self) -> None:
+        """
+        This method initializes the parameters in the correct way.
+        """
+
+        stdv = 1.0 / math.sqrt(self.hidden_size) if self.hidden_size > 0 else 0
+        for weight in self.parameters():
+            torch.nn.init.uniform_(weight, -stdv, stdv)
+
+        return None
+
+
+
+
+
+
+"""
+Embedding Layer
+
+Development of backward pass of the Embeddings layer. No functions from nn package can be used.
+Only 1 for-loop can be used.
+
+"""
+
+
+class EmbeddingFuncion(torch.autograd.Function):
+    """
+    Class for the implementation of the forward and backward pass of
+    the Embedding layer.
+    """
+
+    @staticmethod
+    def forward(
+        ctx: Any,
+        inputs: torch.Tensor,
+        weight: torch.Tensor,
+        padding_idx: int,
+    ) -> torch.Tensor:
+        """
+        This is the forward method of the Embedding layer.
+
+        Args:
+            ctx: context for saving elements for the backward.
+            inputs: input tensor. Dimensions: [batch].
+
+        Returns:
+            outputs tensor. Dimensions: [batch, output dim].
+        """
+
+        # compute embeddings
+        outputs: torch.Tensor = weight[inputs, :]
+
+        # save tensors for the backward
+        ctx.save_for_backward(inputs, weight, torch.tensor(padding_idx))
+
+        return outputs
+
+    @staticmethod
+    def backward(  # type: ignore
+        ctx: Any, grad_outputs: torch.Tensor
+    ) -> tuple[None, torch.Tensor, None]:
+        """
+        This method is the backward of the Embedding layer.
+
+        Args:
+            ctx: context for loading elements from the forward.
+            grad_output: outputs gradients. Dimensions:
+                [batch, output dim].
+
+        Returns:
+            None value.
+            inputs gradients. Dimensions: [batch].
+            None value.
+        """
+
+        # TODO
+
+        inputs, weight, padding_idx = ctx.saved_tensors
+        batch = inputs.shape[0]
+        grad_inputs = torch.zeros_like(weight)
+        
+        for b in range(batch): 
+            
+            word_idx = inputs[b]
+
+            if word_idx != padding_idx:
+                grad_inputs[word_idx] += grad_outputs[b]
+
+        return None, grad_inputs, None
+
+
+
+class Embedding(torch.nn.Module):
+    """
+    This is the class that represents the Embedding Layer.
+    """
+
+    padding_idx: int
+
+    def __init__(
+        self, num_embeddings: int, embedding_dim: int, padding_idx: Optional[int] = None
+    ) -> None:
+        """
+        This method is the constructor of the Embedding layer.
+        """
+
+        # call super class constructor
+        super().__init__()
+
+        # define attributes
+        self.weight: torch.nn.Parameter = torch.nn.Parameter(
+            torch.empty(num_embeddings, embedding_dim)
+        )
+
+        # init parameters corectly
+        self.reset_parameters()
+
+        # set padding idx
+        self.padding_idx = padding_idx if padding_idx is not None else -1
+
+        self.fn = EmbeddingFuncion.apply
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        This is the forward pass for the class.
+
+        Args:
+            inputs: inputs tensor. Dimensions: [batch].
+
+        Returns:
+            outputs tensor. Dimensions: [batch, output dim].
+        """
+
+        return self.fn(inputs, self.weight, self.padding_idx)
+
+    @torch.no_grad()
+    def reset_parameters(self) -> None:
+        torch.nn.init.normal_(self.weight)
+
+
+
+
+
+"""
+LSTM 
+"""
+
+
+
+class LSTMFunction(torch.autograd.Function):
+    """
+    Class for the implementation of the forward and backward pass of the LSTM.
+    """
+
+    @staticmethod
+    def forward(  # type: ignore
+        ctx: Any,
+        inputs: torch.Tensor,
+        h0: torch.Tensor,
+        c0: torch.Tensor,
+        weight_ih: torch.Tensor,
+        weight_hh: torch.Tensor,
+        bias_ih: torch.Tensor,
+        bias_hh: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the LSTM.
+
+        Args:
+            ctx: context for saving elements for backward.
+            inputs: input tensor. [batch, sequence, input size]
+            h0: initial hidden state. [1, batch, hidden size]
+            c0: initial cell state. [1, batch, hidden size]
+            weight_ih: weights for input. [4 * hidden size, input size]
+            weight_hh: weights for hidden state. [4 * hidden size, hidden size]
+            bias_ih: bias for input. [4 * hidden size]
+            bias_hh: bias for hidden state. [4 * hidden size]
+
+        Returns:
+            outputs: [batch, sequence, hidden size]
+            hn: final hidden state. [1, batch, hidden size]
+            cn: final cell state. [1, batch, hidden size]
+        """
+
+        # TODO
+        b, sequence, input_size = inputs.shape
+        _,_, hidden_size = h0.shape
+        
+        h_prev = h0
+        c_prev = c0 
+
+
+        # Input-forget-cell-output order:
+
+        wi_i, wi_f ,wi_c , wi_o = weight_ih.view(4, hidden_size, input_size)
+        bii, bif, bic, bio = bias_ih.view(4, hidden_size)
+
+        wh_i, wh_f ,wh_c , wh_o = weight_hh.view(4, hidden_size, hidden_size)
+        bhi, bhf, bhc, bho = bias_hh.view(4, hidden_size)
+
+        
+        outputs = torch.zeros(b, sequence, hidden_size, dtype = inputs.dtype)
+
+        for ts in range(sequence):
+            x = inputs[:,ts,:]
+
+            # Forget gate
+            z_f = (x @ wi_f.T + bif) + (h_prev @ wh_f.T + bhf)
+            forget_gate = torch.sigmoid(z_f)
+
+            # Input gate:
+            z_i = (x @ wi_i.T + bii) + (h_prev @ wh_i.T + bhi)
+            input_gate = torch.sigmoid(z_i)
+
+            # Cell candidates:
+            z_c = (x @ wi_c.T + bic) + (h_prev @ wh_c.T + bhc)
+            cell_candidate = torch.tanh(z_c)
+
+            # Output gate:
+            z_o = (x @ wi_o.T + bio) + (h_prev @ wh_o.T + bho)
+            output_gate = torch.sigmoid(z_o)
+
+            # Compute next states:
+            c = forget_gate * c_prev + input_gate * cell_candidate
+            h = output_gate * (torch.tanh(c))
+
+            h_prev = h
+            c_prev = c
+
+            outputs[:,ts,:] = h
+        
+        return outputs, h_prev, c_prev
+
+
+class LSTM(torch.nn.Module):
+    """
+    Custom LSTM layer.
+    """
+
+    def __init__(self, input_dim: int, hidden_size: int):
+        super().__init__()
+        self.hidden_size = hidden_size
+
+        self.weight_ih = torch.nn.Parameter(torch.empty(4 * hidden_size, input_dim))
+        self.weight_hh = torch.nn.Parameter(torch.empty(4 * hidden_size, hidden_size))
+        self.bias_ih = torch.nn.Parameter(torch.empty(4 * hidden_size))
+        self.bias_hh = torch.nn.Parameter(torch.empty(4 * hidden_size))
+
+        self.reset_parameters()
+        self.fn = LSTMFunction.apply
+
+    def forward(self, inputs: torch.Tensor, h0: torch.Tensor, c0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return self.fn(inputs, h0, c0, self.weight_ih, self.weight_hh, self.bias_ih, self.bias_hh)
+
+    def reset_parameters(self) -> None:
+        stdv = 1.0 / math.sqrt(self.hidden_size) if self.hidden_size > 0 else 0
+        for weight in self.parameters():
+            torch.nn.init.uniform_(weight, -stdv, stdv)
+
+
+
+"""
+GRU: Gated Recurrent Unit
+"""
+
+
+
+
+class GRUFunction(torch.autograd.Function):
+    """
+    Class for the implementation of the forward and backward pass of the GRU.
+    """
+
+    @staticmethod
+    def forward(  # type: ignore
+        ctx: Any,
+        inputs: torch.Tensor,
+        h0: torch.Tensor,
+        weight_ih: torch.Tensor,
+        weight_hh: torch.Tensor,
+        bias_ih: torch.Tensor,
+        bias_hh: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the GRU.
+
+        Args:
+            ctx: context for saving elements for backward.
+            inputs: input tensor. [batch, sequence, input size]
+            h0: initial hidden state. [1, batch, hidden size]
+            weight_ih: weights for input. [3 * hidden size, input size]
+            weight_hh: weights for hidden state. [3 * hidden size, hidden size]
+            bias_ih: bias for input. [3 * hidden size]
+            bias_hh: bias for hidden state. [3 * hidden size]
+
+        Returns:
+            outputs: [batch, sequence, hidden size]
+            hn: final hidden state. [1, batch, hidden size]
+        """
+        # TODO: implement the forward pass
+
+        # Reset-Update-n
+        _, b, hidden_size = h0.shape
+        b, sequence, input_size = inputs.shape
+        h_prev = h0
+        outputs = torch.zeros(b, sequence, hidden_size, dtype=inputs.dtype)
+
+        wir, wiz, win = weight_ih.view(3, hidden_size, input_size)
+        bir, biz, bin = bias_ih.view(3, hidden_size)
+
+        whr, whz, whn = weight_hh.view(3, hidden_size, hidden_size)
+        bhr, bhz, bhn = bias_hh.view(3, hidden_size)
+
+        for ts in range(sequence):
+
+            x = inputs[:,ts,:]
+
+            # Reset gate:
+            r_t = torch.sigmoid(
+                (x @ wir.T + bir) + (h_prev @ whr.T + bhr)
+            )
+
+            # Update gate:
+            z_t = torch.sigmoid(
+                (x @ wiz.T + biz) + (h_prev @ whz.T + bhz)
+            )
+
+            n_t = torch.tanh(
+                (x @ win.T + bin) + r_t * (h_prev @ whn.T + bhn)
+            )
+
+            # Compute next state
+            h = (1-z_t)*n_t + z_t*h_prev
+            
+            h_prev = h
+            outputs[:,ts,:] = h
+        
+        return outputs, h_prev
+        
+
+
+class GRU(torch.nn.Module):
+    """
+    Custom GRU layer.
+    """
+
+    def __init__(self, input_dim: int, hidden_size: int):
+        super().__init__()
+        self.hidden_size = hidden_size
+
+        self.weight_ih = torch.nn.Parameter(torch.empty(3 * hidden_size, input_dim))
+        self.weight_hh = torch.nn.Parameter(torch.empty(3 * hidden_size, hidden_size))
+        self.bias_ih = torch.nn.Parameter(torch.empty(3 * hidden_size))
+        self.bias_hh = torch.nn.Parameter(torch.empty(3 * hidden_size))
+
+        self.reset_parameters()
+        self.fn = GRUFunction.apply
+
+    def forward(self, inputs: torch.Tensor, h0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.fn(inputs, h0, self.weight_ih, self.weight_hh, self.bias_ih, self.bias_hh)
+
+    def reset_parameters(self) -> None:
+        stdv = 1.0 / math.sqrt(self.hidden_size) if self.hidden_size > 0 else 0
+        for weight in self.parameters():
+            torch.nn.init.uniform_(weight, -stdv, stdv)

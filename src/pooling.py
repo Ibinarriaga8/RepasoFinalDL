@@ -163,6 +163,7 @@ class MaxPool2dFunction(torch.autograd.Function):
         """
 
         # TODO
+        
         max_indices, unfolded_inputs, inputs = ctx.saved_tensors
         b, c, ho, wo = grad_outputs.shape
         b, c, hi, wi = inputs.shape
@@ -172,13 +173,12 @@ class MaxPool2dFunction(torch.autograd.Function):
         grad_outputs_unfolded = grad_outputs.view(b*c, -1)
         
         # d/dx max
-        grad_outputs_fold = torch.zeros_like(unfolded_inputs)
-        
-        grad_outputs_fold.scatter_(1, max_indices.unsqueeze(1), grad_outputs_unfolded.unsqueeze(1))
+        grad_inputs_unfold = torch.zeros_like(unfolded_inputs)
+        grad_inputs_unfold.scatter_(1, max_indices.unsqueeze(1), grad_outputs_unfolded.unsqueeze(1)) # dim = 1(kxk)
 
 
         # Fold
-        grad_inputs = fold_max_pool_2d(grad_outputs_fold,
+        grad_inputs = fold_max_pool_2d(grad_inputs_unfold,
                                        output_size=hi,
                                        batch_size=b,
                                        kernel_size=kernel_size,
@@ -238,50 +238,6 @@ class MaxPool2d(torch.nn.Module):
 Avg Pooling Layer
 """
 
-
-def unfold_avg_pool_2d(
-    inputs: torch.Tensor, kernel_size: int, stride: int, padding: int
-) -> torch.Tensor:
-    """
-    This function computes the unfold needed for the AvgPool2d.
-
-    Args:
-        inputs: inputs tensor. Dimensions: [batch, channels, height, width].
-        kernel_size: size of the kernel.
-        stride: stride of the window.
-        padding: implicit zero paddings on both sides.
-
-    Returns:
-        unfolded tensor: [batch * channels, kernel_size * kernel_size, number of windows]
-    """
-    # TODO
-    pass
-
-def fold_avg_pool_2d(
-    inputs: torch.Tensor,
-    output_size: int,
-    batch_size: int,
-    kernel_size: int,
-    stride: int,
-    padding: int,
-) -> torch.Tensor:
-    """
-    This function computes the fold needed for the AvgPool2d.
-
-    Args:
-        inputs: input unfolded tensor. Dimensions: [batch * channels,
-            kernel size * kernel size, number of windows].
-        output_size: output spatial size (height and width).
-        batch_size: batch size of original input.
-        kernel_size: size of the kernel.
-        stride: stride used in pooling.
-        padding: padding used in pooling.
-
-    Returns:
-        output folded tensor. Dimensions: [batch, channels, height, width].
-    """
-    # TODO
-    pass
 
 class AvgPool2dFunction(torch.autograd.Function):
     """
