@@ -5,7 +5,7 @@ import torch
 import pytest
 
 # own modules
-from src.pooling import unfold_max_pool_2d, fold_max_pool_2d, MaxPool2d
+from src.pooling import unfold_max_pool_2d, fold_max_pool_2d, MaxPool2d, AvgPool2d
 from src.utils import set_seed
 
 
@@ -186,5 +186,85 @@ def test_max_pool_backward(shape: tuple[int, ...], kernel_size: int) -> None:
         assert torch.allclose(
             grad_inputs, grad_inputs_torch, atol=1e-10
         ), "Incorrect outputs"
+
+    return None
+
+
+
+@pytest.mark.order(9)
+@pytest.mark.parametrize(
+    "shape, kernel_size", [((64, 3, 32, 32), 4), ((128, 2, 64, 64), 3)]
+)
+def test_avg_pool_forward(shape: tuple[int, ...], kernel_size: int) -> None:
+    """
+    This function is the test for the forward of the AvgPool2d.
+
+    Args:
+        shape: shape of the input tensor.
+        kernel_size: kernel size to use.
+    """
+
+    for seed in range(10):
+        # define inputs
+        set_seed(seed)
+        inputs: torch.Tensor = torch.rand(shape)
+
+        # define models
+        model = AvgPool2d(kernel_size, stride=1)
+        model_torch = torch.nn.AvgPool2d(kernel_size, stride=1)
+
+        # compute outputs
+        outputs = model(inputs)
+        outputs_torch = model_torch(inputs)
+
+        # check output size
+        assert (
+            outputs.shape == outputs_torch.shape
+        ), f"Incorrect outputs shape, expected {outputs_torch.shape}, got {outputs.shape}"
+
+        # check outputs
+        assert torch.allclose(outputs, outputs_torch, atol=1e-6), "Incorrect outputs"
+
+    return None
+
+
+@pytest.mark.order(10)
+@pytest.mark.parametrize(
+    "shape, kernel_size", [((64, 3, 32, 32), 4), ((128, 2, 64, 64), 3)]
+)
+def test_avg_pool_backward(shape: tuple[int, ...], kernel_size: int) -> None:
+    """
+    This function is the test for the backward of the AvgPool2d.
+
+    Args:
+        shape: shape of the input tensor.
+        kernel_size: kernel size to use.
+    """
+
+    for seed in range(10):
+        set_seed(seed)
+        inputs: torch.Tensor = torch.rand(shape, requires_grad=True)
+
+        model = AvgPool2d(kernel_size, stride=1)
+        model_torch = torch.nn.AvgPool2d(kernel_size, stride=1)
+
+        # forward & backward custom
+        outputs = model(inputs)
+        if inputs.grad is not None:
+            inputs.grad.zero_()
+        outputs.sum().backward()
+        assert inputs.grad is not None, "Gradients not returned"
+        grad_inputs = inputs.grad.clone()
+
+        # forward & backward torch
+        outputs_torch = model_torch(inputs)
+        inputs.grad.zero_()
+        outputs_torch.sum().backward()
+        assert inputs.grad is not None, "Torch gradients not returned"
+        grad_inputs_torch = inputs.grad.clone()
+
+        # check shape and values
+        assert grad_inputs.shape == grad_inputs_torch.shape, "Incorrect gradient shape"
+        assert torch.allclose(grad_inputs, grad_inputs_torch, atol=1e-6), "Incorrect gradients"
 
     return None

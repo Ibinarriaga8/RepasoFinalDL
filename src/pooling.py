@@ -163,7 +163,7 @@ class MaxPool2dFunction(torch.autograd.Function):
         """
 
         # TODO
-        
+
         max_indices, unfolded_inputs, inputs = ctx.saved_tensors
         b, c, ho, wo = grad_outputs.shape
         b, c, hi, wi = inputs.shape
@@ -244,6 +244,7 @@ class AvgPool2dFunction(torch.autograd.Function):
     Custom implementation of AvgPool2d forward and backward.
     """
 
+
     @staticmethod
     def forward(ctx: Any, inputs: torch.Tensor, kernel_size: int, stride: int, padding: int) -> torch.Tensor:
         """
@@ -257,10 +258,41 @@ class AvgPool2dFunction(torch.autograd.Function):
             padding: padding applied to inputs.
 
         Returns:
-            Output tensor. Dimensions: [batch, channels, pooled height, pooled width].
+                Output of the layer. Dimensions:
+                [batch, channels,
+                (height + 2*padding - kernel size) / stride + 1,
+                (width + 2*padding - kernel size) / stride + 1]
         """
+
         # TODO
-        pass
+
+        b, c, hi, wi = inputs.shape
+        ho = (hi + 2*padding - kernel_size)//stride + 1
+        wo = (wi + 2*padding - kernel_size)//stride + 1
+
+        unfolded_inputs = unfold_max_pool_2d(
+            inputs, 
+            kernel_size=kernel_size,
+            stride=stride,
+            padding = padding
+        )
+
+        # Compute avg over unfolded_inputs
+        unfolded_outputs = unfolded_inputs.mean(dim = 1)
+        outputs = unfolded_outputs.view(b, c, ho, wo)
+
+        ctx.save_for_backward(
+            inputs,
+            unfolded_outputs,
+            unfolded_inputs
+        )
+        ctx.kernel_size = kernel_size
+        ctx.padding = padding
+        ctx.stride = stride
+
+        return outputs
+
+        
 
     @staticmethod
     def backward(ctx: Any, grad_outputs: torch.Tensor) -> tuple[torch.Tensor, None, None, None]:
@@ -279,7 +311,34 @@ class AvgPool2dFunction(torch.autograd.Function):
             None (for padding).
         """
         # TODO
-        pass
+        
+        inputs, unfolded_outputs, unfolded_inputs = ctx.saved_tensors
+        kernel_size =ctx.kernel_size
+        padding = ctx.padding
+        stride = ctx.stride
+
+        b, c, hi, wi = inputs.shape
+        b, c, ho, wo = grad_outputs.shape
+
+        grad_outputs_unfolded = grad_outputs.view(b*c, ho*wo)
+        grad_inputs_unfolded = torch.ones_like(unfolded_inputs) # bc*khkw*howo
+        
+        grad_inputs_unfolded = grad_outputs_unfolded.unsqueeze(1) * grad_inputs_unfolded/(kernel_size**2)
+        
+        grad_inputs = fold_max_pool_2d(
+            grad_inputs_unfolded,
+            output_size=hi,
+            batch_size=b,
+            kernel_size=kernel_size,
+            padding=padding,
+            stride=stride,
+        )
+
+        return (
+            grad_inputs,
+            None,
+            None,
+            None)
 
 class AvgPool2d(torch.nn.Module):
     """

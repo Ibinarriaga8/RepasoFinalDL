@@ -8,9 +8,9 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 # own modules
-from models import CNNModel
+from src.layers import CNNModel
 from src.data import load_data
-from utils import (
+from src.utils import (
     Accuracy,
     save_model,
     set_seed,
