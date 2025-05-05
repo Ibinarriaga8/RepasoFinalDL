@@ -3,33 +3,6 @@ import torch.nn.functional as F
 from src.activations import *
 import pytest
 
-# ---------- Linear Layer Test ----------
-def test_linear_forward_backward():
-    batch, input_dim, output_dim = 5, 10, 4
-
-    x = torch.randn(batch, input_dim, requires_grad=True)
-    custom_linear = Linear(input_dim, output_dim)
-    torch_linear = torch.nn.Linear(input_dim, output_dim)
-    
-    # Copy weights and bias
-    torch_linear.weight.data = custom_linear.weight.data.clone()
-    torch_linear.bias.data = custom_linear.bias.data.clone()
-
-    # Forward
-    y_custom = custom_linear(x)
-    y_torch = torch_linear(x)
-
-    assert torch.allclose(y_custom, y_torch, atol=1e-6), "Linear forward mismatch"
-
-    # Backward
-    grad_output = torch.randn_like(y_custom)
-    y_custom.backward(grad_output, retain_graph=True)
-    y_torch.backward(grad_output)
-
-    assert torch.allclose(x.grad, x.grad, atol=1e-6), "Linear backward mismatch (input grad)"
-    assert torch.allclose(custom_linear.weight.grad, torch_linear.weight.grad, atol=1e-6), "Linear backward mismatch (weight grad)"
-    assert torch.allclose(custom_linear.bias.grad, torch_linear.bias.grad, atol=1e-3), "Linear backward mismatch (bias grad)"
-
 
 # ---------- ReLU Layer Test ----------
 def test_relu_forward_backward():
@@ -50,18 +23,6 @@ def test_relu_forward_backward():
     assert torch.allclose(x.grad, x_torch.grad, atol=1e-6), "ReLU backward mismatch"
 
 
-# ---------- Huber Loss Test ----------
-def test_huber_loss_forward():
-    x = torch.tensor([0.0, 0.5, 1.5, -2.0], requires_grad=True)
-    target = torch.tensor([0.0, 0.0, 0.0, 0.0])
-
-    delta = 1.0
-    custom_loss_fn = HuberLoss(delta)
-    loss_custom = custom_loss_fn(x, target)
-
-    loss_torch = torch.nn.functional.huber_loss(x, target, delta=delta, reduction='none')
-
-    assert torch.allclose(loss_custom, loss_torch, atol=1e-5), "Huber loss forward mismatch"
 
 # Puedes añadir backward test si implementas correctamente el backward de Huber
 
@@ -209,5 +170,32 @@ def test_hardswish_forward_backward():
 
     assert torch.allclose(x.grad, x_torch.grad, atol=1e-6), "HardSwish backward mismatch"
 
-if __name__ == "__main__":
-    pytest.main(["-v", "--tb=short"])
+
+
+def test_hardsigmoid_forward():
+    x = torch.randn(10, requires_grad=True)
+
+    custom_hardsigmoid = HardSigmoid()
+    y_custom = custom_hardsigmoid(x)
+
+    x_torch = x.clone().detach()
+    y_torch = F.hardsigmoid(x_torch)
+
+    assert torch.allclose(y_custom, y_torch, atol=1e-6), "HardSigmoid forward mismatch"
+
+
+
+def test_hardsigmoid_backward():
+    x = torch.randn(10, requires_grad=True)
+
+    custom_hardsigmoid = HardSigmoid()
+    y_custom = custom_hardsigmoid(x)
+
+    x_torch = x.clone().detach().requires_grad_()
+    y_torch = F.hardsigmoid(x_torch)
+
+    grad_output = torch.ones_like(x)
+    y_custom.backward(grad_output, retain_graph=True)
+    y_torch.backward(grad_output)
+
+    assert torch.allclose(x.grad, x_torch.grad, atol=1e-6), "HardSigmoid backward mismatch"

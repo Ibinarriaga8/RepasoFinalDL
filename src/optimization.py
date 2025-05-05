@@ -56,8 +56,8 @@ class SGD(torch.optim.Optimizer):
                 
                 d_p = p.grad
 
-                if group["weigh_decay"] != 0: # Apply L2 regularization
-                    d_p = d_p + group["weigh_decay"]*p.data
+                if group["weight_decay"] != 0: # Apply L2 regularization
+                    d_p = d_p + group["weight_decay"]*p.data
                 
                 # Update step
                 p.data = p.data - group["lr"]*d_p
@@ -181,7 +181,7 @@ class SGDNesterov(torch.optim.Optimizer):
 
         # TODO
         defaults: Dict[Any, Any] = dict(lr=lr, momentum=momentum, weight_decay= weight_decay)
-        super.__init__(defaults=defaults, params=params)
+        super().__init__(defaults=defaults, params=params)
 
     def __setstate__(self, state):
         super().__setstate__(state)
@@ -262,7 +262,7 @@ class Adam(torch.optim.Optimizer):
 
         # TODO
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
-        super.__init__(defaults, params)
+        super().__init__(params, defaults)
 
     def __setstate__(self, state):
         super().__setstate__(state)
@@ -595,5 +595,100 @@ class AdaDelta(torch.optim.Optimizer):
         
 
 
+
+
+class Adafactor(torch.optim.Optimizer):
+    """
+    This class is a custom implementation of the Adafactor algorithm.
+
+    Attr:
+        param_groups: list with the dict of the parameters.
+        state: dict with the state for each parameter.
+    """
+
+    # define attributes
+    param_groups: list[Dict[str, torch.Tensor]]
+    state: DefaultDict[torch.Tensor, Any]
+
+    def __init__(
+        self,
+        params: Iterator[torch.nn.Parameter],
+        lr=1e-2,
+        eps: tuple[float, float] = (1e-30, 1e-3),
+        clip_threshold: float = 1.0,
+        decay_rate: float = 0.8,
+        beta: float = None,
+        weight_decay: float = 0.0,
+        scale_parameter: bool = True,
+        relative_step: bool = False,
+    ) -> None:
+        """
+        This is the constructor for Adafactor.
+
+        Args:
+            params: parameters of the model.
+            lr: learning rate. Defaults to 1e-2.
+            eps: tuple for numerical stability. Defaults to (1e-30, 1e-3).
+            clip_threshold: threshold for gradient clipping. Defaults to 1.0.
+            decay_rate: decay rate for second moment estimation. Defaults to 0.8.
+            beta: optional momentum parameter. Defaults to None.
+            weight_decay: weight decay. Defaults to 0.0.
+            scale_parameter: whether to scale learning rate. Defaults to True.
+            relative_step: whether to use relative step size. Defaults to False.
+        """
+        # TODO
+
+        defaults = dict(
+            lr = lr,
+            eps = eps,
+            clip_threshold = clip_threshold,
+            decay_rate = decay_rate,
+            beta = beta,
+            weight_decay = weight_decay,
+            scale_parameter = scale_parameter,
+            relative_step = relative_step
+        )
+
+        super().__init__(params, defaults)
+
+    def __setstate__(self, state):
+        super().__setstate__(state)
+
+    def step(self, closure: None = None) -> None:  # type: ignore
+        """
+        This method is the step of the optimization algorithm.
+
+        Args:
+            closure: Ignore this parameter. Defaults to None.
+        """
+        # TODO
+
+        for group in self.param_groups:
+            for p in group["params"]:
+
+                if p.grad is None:
+                    continue
+                
+                d_p = p.grad
+
+                if group["weight_decay"] != 0:
+                    d_p += group["weight_decay"] * p.data
+                
+                tau = group["decay_rate"]
+                lr = group["lr"]
+                eps = group["eps"]
+
+                param_state = self.state[p]
+                if "betas" not in param_state:
+                    param_state["betas"] = 0
+                    param_state["t"] = 0
+                    param_state["r"] = torch.zeros_like(d_p)
+
+
+                b = param_state["betas"]
+                t = param_state["t"]
+                
+                b = 1 - t**tau
+                rho = (lr, 1/t.sqrt()).min()
 
 

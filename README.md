@@ -33,3 +33,9 @@ adaptations. (1 point)
 2. Development of forward and backward of MaxPool2d. To code it, you have to use the adaptations
 fold and unfold coded before, no other implementation will be allowed. No for-loops or functions
 from the nn package can be used. (2 points )
+
+## Conv2d Forward (5 points)
+
+In this exercise you will have to implement the Conv2d forward. In this case you cannot use the fold and unfold operations, neither the nn package. Only two for-loops are allowed, to iterate over the spatial dimensions. The rest of the operations should be solved with indexing and tensor operations (e.g. torch.sum).
+
+For this you will have to fill the forward of the class written in src.conv. Link to pytorch documentation of the layer: https://pytorch.org/docs/stable/generated/torch.nn.Conv2d.html.

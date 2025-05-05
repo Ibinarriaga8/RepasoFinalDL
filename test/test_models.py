@@ -8,7 +8,7 @@ from typing import Optional
 
 # own modules
 from src.utils import set_seed, parameters_to_double
-from src.layers import RNN, LSTM, GRU, Embedding
+from src.layers import InterConv2d, RNN, LSTM, GRU, Embedding
 
 
 @pytest.mark.order(1)
@@ -333,3 +333,26 @@ def test_embedding(
         ), "Incorrect grad inputs"
 
     return None
+
+
+@pytest.mark.parametrize("out_channels, kernel_size", [(10, 3), (2, 7)])
+@torch.no_grad()
+def test_conv(out_channels: int, kernel_size: int) -> None:
+    # Generar input aleatorio directamente
+    batch_size, in_channels, height, width = 4, 3, 20, 20
+    inputs_conv = torch.randn(batch_size, in_channels, height, width)
+
+    # Crear modelos
+    model = InterConv2d(in_channels, out_channels, kernel_size)
+    model_torch = torch.nn.Conv2d(in_channels, out_channels, kernel_size)
+
+    # Igualar pesos y bias
+    model_torch.weight.data = model.weight.data.clone()
+    model_torch.bias.data = model.bias.data.clone()
+
+    # Comparar salidas
+    output_custom = model(inputs_conv)
+    output_torch = model_torch(inputs_conv)
+
+    # Afirmar igualdad con tolerancia
+    assert torch.allclose(output_custom, output_torch, atol=1e-5), "Mismatch in outputs"

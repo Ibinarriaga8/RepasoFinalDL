@@ -5,131 +5,8 @@ from typing import Any
 import torch
 import math
 
-class LinearFunction(torch.autograd.Function):
-    """
-    This class implements the forward and backward of the Linear layer.
-    """
-
-    @staticmethod
-    def forward(
-        ctx: Any, inputs: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        This method is the forward pass of the Linear layer.
-
-        Args:
-            ctx: Contex for saving elements for the backward.
-            inputs: Inputs tensor. Dimensions:
-                [batch, input dimension].
-            weight: weights tensor.
-                Dimensions: [output dimension, input dimension].
-            bias: Bias tensor. Dimensions: [output dimension].
-
-        Returns:
-            Outputs tensor. Dimensions: [batch, output dimension].
-        """
-
-        # TODO
-        result = torch.matmul(inputs, weight.T) + bias #broadcasting with batch dimension
-        ctx.save_for_backward(inputs, weight)
-        return result
 
 
-    @staticmethod
-    def backward(  # type: ignore
-        ctx: Any, grad_output: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        This method is the backward for the Linear layer.
-        Computes inputs, weights and bias gradients through backpropagation with grad_output.
-
-        Args:
-            ctx: Context for loading elements from the forward.
-            grad_output: Outputs gradients.
-                Dimensions: [batch, output dimension].
-
-        Returns:
-            Inputs gradients. Dimensions: [batch, input dimension].
-            Weights gradients. Dimensions: [output dimension,
-                input dimension].
-            Bias gradients. Dimension: [output dimension].
-        """
-
-        # TODO
-
-        inputs, weight = ctx.saved_tensors
-
-        input_gradient = torch.matmul(grad_output, weight) 
-        weight_gradient = torch.matmul(grad_output.T, inputs)
-        bias_gradient = grad_output.sum(dim = 0) #suma por batch, por columnas (dim = 0) 
-        return input_gradient, weight_gradient, bias_gradient
-
-
-class Linear(torch.nn.Module):
-    """
-    This is the class that represents the Linear Layer.
-
-    Attributes:
-        weight: Weight torch parameter. Dimensions: [output dimension,
-            input dimension].
-        bias: Bias torch parameter. Dimensions: [output dimension].
-        fn: Autograd function.
-    """
-
-    def __init__(self, input_dim: int, output_dim: int) -> None:
-        """
-        This method is the constructor of the Linear layer.
-        The attributes must be named the same as the parameters of the
-        linear layer in pytorch. The parameters should be initialized
-
-        Args:
-            input_dim: Input dimension.
-            output_dim: Output dimension.
-        """
-
-        # call super class constructor
-        super().__init__()
-
-        # define attributes
-        self.weight: torch.nn.Parameter = torch.nn.Parameter(
-            torch.empty(output_dim, input_dim)
-        )
-        self.bias: torch.nn.Parameter = torch.nn.Parameter(torch.empty(output_dim))
-
-        # init parameters corectly
-        self.reset_parameters()
-
-        # define layer function
-        self.fn = LinearFunction.apply
-
-        return None
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """
-        This method if the forward pass of the layer.
-
-        Args:
-            inputs: Inputs tensor. Dimensions: [batch, input dim].
-
-        Returns:
-            Outputs tensor. Dimensions: [batch, output dim].
-        """
-
-        return self.fn(inputs, self.weight, self.bias)
-
-    def reset_parameters(self) -> None:
-        """
-        This method initializes the parameters in the correct way.
-        """
-
-        # init parameters the correct way
-        torch.nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        if self.bias is not None:
-            fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.weight)
-            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
-            torch.nn.init.uniform_(self.bias, -bound, bound)
-
-        return None
 
 
 class ReLUFunction(torch.autograd.Function):
@@ -206,109 +83,6 @@ class ReLU(torch.nn.Module):
 
         return self.fn(inputs)
 
-
-class HuberLossFunction(torch.autograd.Function):
-    """
-    Class for the implementation of the forward and backward pass of
-    the HuberLoss.
-    """
-
-    @staticmethod
-    def forward(
-        ctx: Any, inputs: torch.Tensor, targets: torch.Tensor, delta: float
-    ) -> torch.Tensor:
-        """
-        This is the forward method of the HuberLoss.
-
-        Args:
-            ctx: context for saving elements for the backward.
-            inputs: input tensor. Dimensions: [*].
-
-        Returns:
-            outputs tensor. Dimensions: [*], same as inputs.
-        """
-
-        # TODO
-
-        x = inputs - targets
-        ctx.save_for_backward(x, torch.tensor(delta), inputs, targets)
-        outputs = x.clone()
-
-        mask = (abs(x) < delta)
-        outputs[mask] = 0.5*(x[mask] @ x[mask].T)
-        outputs[abs(x) >delta] = delta*(abs(x[abs(x)>delta]) - 0.5*delta)
-
-
-        return outputs
-
-
-    @staticmethod
-    def backward(  # type: ignore
-        ctx: Any, grad_output: torch.Tensor
-    ) -> tuple[torch.Tensor, None, None]:
-        """
-        This method is the backward of the HuberLoss.
-
-        Args:
-            ctx: context for loading elements from the forward.
-            grad_output: outputs gradients. Dimensions: [*].
-
-        Returns:
-            inputs gradients. Dimensions: [*], same as the grad_output.
-            None.
-            None.
-        """
-
-        # TODO
-        x, delta, inputs, targets = ctx.saved_tensors
-        delta = delta.item()
-
-        grad_input = torch.empty_like(inputs)
-
-        mask = abs(x) < delta
-
-        # Derivada cuadrática para errores pequeños
-        grad_input[mask] = x[mask] * grad_output[mask]
-
-        # Derivada lineal para errores grandes
-        grad_input[~mask] = delta * torch.sign(x[~mask]) * grad_output[~mask]
-
-        return None, None, None
-
-class HuberLoss(torch.nn.Module):
-    """
-    This is the class that represents the HuberLoss Layer.
-    """
-
-    def __init__(self, delta: float = 1.0):
-        """
-        This method is the constructor of the HuberLoss layer.
-        """
-
-        # Call super class constructor
-        super().__init__()
-
-        # Set attributes
-        self.delta = delta
-
-        # Set function
-        self.fn = HuberLossFunction.apply
-
-        return None
-
-    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """
-        This is the forward pass for the class.
-
-        Args:
-            inputs: inputs tensor. Dimensions: [*].
-
-        Returns:
-            outputs tensor. Dimensions: [*] (same as the input).
-        """
-
-        return self.fn(inputs, targets, self.delta)
-    
 
 
 class LeakyReLUFunctional(torch.autograd.Function):
@@ -872,9 +646,72 @@ class MaxoutFunction(torch.autograd.Function):
         return inputs_grad, weights1_grad, b1_grad, weights2_grad, b2_grad             
 
 
+class HardSigmoidFunctional(torch.autograd.Function):
+    """
+    Class for the implementation of the forward and backward pass of
+    the HardSigmoid.
+    """
+
+    @staticmethod
+    def forward(ctx: Any, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        This is the forward method of the HardSigmoid.
+
+        Args:
+            ctx: Context for saving elements for the backward.
+            inputs: Input tensor. Dimensions: [*].
+
+        Returns:
+            Outputs tensor. Dimensions: [*], same as inputs.
+        """
+
+        # TODO
+        outputs = inputs.clone()
+        outputs[inputs <= -3] = 0
+        outputs[inputs >= 3] = 1
+
+        mask = (inputs >-3) & (inputs<3)
+        outputs[mask] = 1/2 + inputs[mask]*1/6
+        
+        ctx.save_for_backward(inputs, mask)
+        return outputs
 
 
+    @staticmethod
+    def backward(ctx: Any, grad_output: torch.Tensor) -> torch.Tensor:
+        """
+        This method is the backward of the HardSigmoid.
+        Defines how to compute gradient in backpropagation
 
+        Args:
+            ctx: Context for loading elements from the forward.
+            grad_output: Outputs gradients. Dimensions: [*].
+
+        Returns:
+            Inputs gradients. Dimensions: [*], same as the grad_output.
+        """
+
+        # TODO
+        inputs, mask = ctx.saved_tensors
+
+        grad_inputs = grad_output.clone()
+        grad_inputs[mask] *=1/6
+        grad_inputs[~mask] = 0
+
+        return grad_inputs
+
+
+class HardSigmoid(torch.nn.Module):
+    """
+    Class for the implementation of the forward and backward pass of
+    the HardSigmoid.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        return HardSigmoidFunctional.apply(inputs)
         
 
         
